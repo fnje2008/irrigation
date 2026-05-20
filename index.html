@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>智能灌溉控制器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { 
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f5f5f5; color: #222; min-height: 100vh;
+    padding: 12px; max-width: 420px; margin: 0 auto;
+  }
+  .topbar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .topbar .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .topbar .dot.on { background: #3B6D11; }
+  .topbar .dot.off { background: #E24B4A; }
+  .topbar .name { font-size: 15px; font-weight: 500; }
+  .topbar .status { margin-left: auto; font-size: 12px; }
+  .topbar .status.on { color: #3B6D11; }
+  .topbar .status.off { color: #E24B4A; }
+
+  .gauges { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .gauge-card { background: #fff; border-radius: 12px; padding: 12px 8px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .gauge-card .label { font-size: 12px; color: #888; margin-bottom: 4px; }
+  .gauge-card svg { display: block; margin: 0 auto; }
+  .gauge-card .value { font-size: 24px; font-weight: 500; }
+
+  .info-row { display: flex; gap: 10px; margin-bottom: 14px; }
+  .info-card { flex: 1; background: #fff; border-radius: 10px; padding: 10px 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .info-card .ilabel { font-size: 12px; color: #888; }
+  .info-card .ivalue { font-size: 15px; font-weight: 500; display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+  .idot { width: 8px; height: 8px; border-radius: 50%; }
+
+  .slider-box { background: #fff; border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .slider-box .shead { display: flex; justify-content: space-between; font-size: 13px; }
+  .slider-box input[type=range] { width: 100%; margin-top: 6px; accent-color: #378ADD; }
+
+  .btn-water { width: 100%; padding: 14px; font-size: 16px; font-weight: 500; border: none; border-radius: 12px; color: #fff; cursor: pointer; transition: background 0.2s; }
+  .btn-ready { background: #378ADD; }
+  .btn-running { background: #639922; }
+  .btn-offline { background: #aaa; }
+
+  .log-box { font-size: 12px; color: #888; text-align: center; margin-top: 10px; }
+  .log-box span { display: block; }
+
+  .empty { text-align: center; padding: 40px 0; color: #aaa; }
+  .empty p { margin-top: 8px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="dot off" id="mqttDot"></div>
+  <span class="name">阳台智能灌溉</span>
+  <span class="status off" id="mqttStatus">未连接</span>
+</div>
+
+<div id="mainContent" style="display:none;">
+  <div class="gauges">
+    <div class="gauge-card">
+      <div class="label">大盆组</div>
+      <svg viewBox="0 0 80 80" width="70" height="70" id="svgBig">
+        <circle cx="40" cy="40" r="32" fill="none" stroke="#e8e8e8" stroke-width="5"/>
+        <circle cx="40" cy="40" r="32" fill="none" stroke="#3B6D11" stroke-width="5" stroke-linecap="round" id="arcBig" transform="rotate(-90 40 40)"/>
+      </svg>
+      <div class="value" id="valBig">--</div>
+    </div>
+    <div class="gauge-card">
+      <div class="label">中盆组</div>
+      <svg viewBox="0 0 80 80" width="70" height="70" id="svgMid">
+        <circle cx="40" cy="40" r="32" fill="none" stroke="#e8e8e8" stroke-width="5"/>
+        <circle cx="40" cy="40" r="32" fill="none" stroke="#EF9F27" stroke-width="5" stroke-linecap="round" id="arcMid" transform="rotate(-90 40 40)"/>
+      </svg>
+      <div class="value" id="valMid">--</div>
+    </div>
+    <div class="gauge-card">
+      <div class="label">小盆组</div>
+      <svg viewBox="0 0 80 80" width="70" height="70" id="svgSml">
+        <circle cx="40" cy="40" r="32" fill="none" stroke="#e8e8e8" stroke-width="5"/>
+        <circle cx="40" cy="40" r="32" fill="none" stroke="#BA7517" stroke-width="5" stroke-linecap="round" id="arcSml" transform="rotate(-90 40 40)"/>
+      </svg>
+      <div class="value" id="valSml">--</div>
+    </div>
+  </div>
+
+  <div class="info-row">
+    <div class="info-card">
+      <div class="ilabel">水泵状态</div>
+      <div class="ivalue"><div class="idot" id="pumpDot" style="background:#aaa;"></div><span id="pumpTxt">待机</span></div>
+    </div>
+    <div class="info-card">
+      <div class="ilabel">水量</div>
+      <div class="ivalue"><div class="idot" id="waterDot" style="background:#639922;"></div><span id="waterTxt">正常</span></div>
+    </div>
+  </div>
+
+  <div class="slider-box">
+    <div class="shead"><span style="color:#888;">浇水秒数</span><span style="font-weight:500;" id="secsVal">30秒</span></div>
+    <input type="range" min="5" max="120" value="30" id="secsSlider" oninput="updateSecs()">
+  </div>
+
+  <button class="btn-water btn-ready" id="waterBtn" onclick="doWater()">立即浇水</button>
+</div>
+
+<div class="empty" id="emptyState">
+  <p>正在连接巴法云...</p>
+</div>
+
+<div class="log-box" id="logBox">
+  <span>就绪</span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+<script>
+// ==================== 用户设置 ====================
+var UID = "4791deba3073447eb9cda4bec32df1f4";  // 巴法云私钥
+var MQTT_HOST = "bemfa.com";
+var MQTT_PORT = 9504;
+var MQTT_PATH = "/mqtt";
+
+// 主题
+var TOPIC_BIG   = "irrigate002";
+var TOPIC_MID   = "irrigate003";
+var TOPIC_SMALL = "irrigate004";
+var TOPIC_WATER = "irrigate006";
+var TOPIC_CMD   = "irrigate005";
+var TOPIC_SECS  = "irrigate007";
+
+// ==================== MQTT 连接 ====================
+var client;
+var connected = false;
+
+function connectMQTT() {
+  try {
+    client = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, MQTT_PATH, UID);
+    
+    client.onConnectionLost = function(resp) {
+      connected = false;
+      updateStatus(false);
+      log("连接断开，5秒后重连...");
+      setTimeout(connectMQTT, 5000);
+    };
+    
+    client.onMessageArrived = onMessage;
+    
+    client.connect({
+      onSuccess: function() {
+        connected = true;
+        updateStatus(true);
+        log("巴法云已连接");
+        // 订阅主题
+        client.subscribe(TOPIC_BIG);
+        client.subscribe(TOPIC_MID);
+        client.subscribe(TOPIC_SMALL);
+        client.subscribe(TOPIC_WATER);
+      },
+      onFailure: function(err) {
+        connected = false;
+        updateStatus(false);
+        log("连接失败: " + err.errorMessage);
+        setTimeout(connectMQTT, 5000);
+      },
+      useSSL: true,
+      userName: "",
+      password: "",
+      keepAliveInterval: 60
+    });
+  } catch(e) {
+    log("MQTT 错误: " + e.message);
+    setTimeout(connectMQTT, 5000);
+  }
+}
+
+// ==================== 状态更新 ====================
+function updateStatus(ok) {
+  document.getElementById('mqttDot').className = 'dot ' + (ok ? 'on' : 'off');
+  document.getElementById('mqttStatus').className = 'status ' + (ok ? 'on' : 'off');
+  document.getElementById('mqttStatus').textContent = ok ? '在线' : '未连接';
+  
+  document.getElementById('mainContent').style.display = ok ? 'block' : 'none';
+  document.getElementById('emptyState').style.display = ok ? 'none' : 'block';
+  
+  if (!ok) {
+    document.getElementById('waterBtn').className = 'btn-water btn-offline';
+    document.getElementById('waterBtn').textContent = '离线不可用';
+  } else {
+    document.getElementById('waterBtn').className = 'btn-water btn-ready';
+    document.getElementById('waterBtn').textContent = '立即浇水';
+  }
+}
+
+function log(msg) {
+  document.getElementById('logBox').innerHTML = '<span>' + new Date().toLocaleTimeString('zh-CN') + ' ' + msg + '</span>';
+}
+
+// ==================== 更新弧线 ====================
+// 圆周长 = 2*PI*32 ≈ 201
+var CIRCUM = 201;
+
+function updateGauge(arcId, valId, val) {
+  var arc = document.getElementById(arcId);
+  var display = document.getElementById(valId);
+  if (val === null || val === undefined || isNaN(val)) {
+    display.textContent = '--';
+    arc.setAttribute('stroke-dasharray', CIRCUM);
+    arc.setAttribute('stroke-dashoffset', CIRCUM);
+    return;
+  }
+  val = Math.max(0, Math.min(100, parseInt(val)));
+  display.textContent = val + '%';
+  
+  var offset = CIRCUM - (val / 100) * CIRCUM;
+  arc.setAttribute('stroke-dasharray', CIRCUM);
+  arc.setAttribute('stroke-dashoffset', offset);
+}
+
+// ==================== 接收消息 ====================
+function onMessage(msg) {
+  var topic = msg.destinationName;
+  var payload = msg.payloadString.trim();
+  
+  log("收到 " + topic + " = " + payload);
+  
+  if (topic === TOPIC_BIG) updateGauge('arcBig', 'valBig', parseInt(payload));
+  if (topic === TOPIC_MID) updateGauge('arcMid', 'valMid', parseInt(payload));
+  if (topic === TOPIC_SMALL) updateGauge('arcSml', 'valSml', parseInt(payload));
+  
+  if (topic === TOPIC_WATER) {
+    var wdot = document.getElementById('waterDot');
+    var wtxt = document.getElementById('waterTxt');
+    if (payload === '1') {
+      wdot.style.background = '#E24B4A';
+      wtxt.textContent = '缺水！';
+      wtxt.style.color = '#E24B4A';
+    } else {
+      wdot.style.background = '#639922';
+      wtxt.textContent = '正常';
+      wtxt.style.color = '#222';
+    }
+  }
+}
+
+// ==================== 浇水操作 ====================
+var watering = false;
+var waterTimer = null;
+
+function updateSecs() {
+  document.getElementById('secsVal').textContent = document.getElementById('secsSlider').value + '秒';
+}
+
+function doWater() {
+  if (!connected || watering) return;
+  
+  var secs = parseInt(document.getElementById('secsSlider').value);
+  watering = true;
+  
+  var btn = document.getElementById('waterBtn');
+  btn.className = 'btn-water btn-running';
+  
+  var dot = document.getElementById('pumpDot');
+  dot.style.background = '#639922';
+  document.getElementById('pumpTxt').textContent = '运行中';
+  
+  // 先发秒数，再发命令
+  client.send(TOPIC_SECS, String(secs), 0, false);
+  client.send(TOPIC_CMD, "on", 0, false);
+  
+  log("发送浇水命令 " + secs + "秒");
+  
+  var remaining = secs;
+  btn.textContent = '浇水中... 剩余' + remaining + '秒';
+  
+  waterTimer = setInterval(function() {
+    remaining--;
+    if (remaining <= 0) {
+      clearInterval(waterTimer);
+      waterTimer = null;
+      btn.className = 'btn-water btn-ready';
+      btn.textContent = '立即浇水';
+      dot.style.background = '#aaa';
+      document.getElementById('pumpTxt').textContent = '待机';
+      watering = false;
+      log("浇水完成");
+    } else {
+      btn.textContent = '浇水中... 剩余' + remaining + '秒';
+    }
+  }, 1000);
+}
+
+// ==================== 启动 ====================
+log("正在初始化...");
+connectMQTT();
+</script>
+</body>
+</html>
